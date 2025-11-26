@@ -64,6 +64,11 @@ let noiseSamples = [];
 const NOISE_SAMPLE_SIZE = 50;
 let volumeLevel = 0; // 当前音量级别，便于调试
 
+let interactionTriggered = false;
+let interactionCooldown = 0;
+const INTERACTION_COOLDOWN_DURATION = 3000; // 互动冷却时间3秒
+let customDialogText = ""; // 存储用户输入的对话框内容
+
 // 首次用户交互标记
 let userInteracted = false;
 
@@ -76,9 +81,51 @@ let receivedData = ""; // 用于存储接收到的完整数据
 const SCORE_COOLDOWN_DURATION = 1000; // 冷却时间1秒（防止重复处理同一评分）
 const SCORE_TO_MOOD_RATIO = 1; // 1分评分 = +1心情值（可按需调整）
 
-function setup() {
-  createCanvas(windowWidth, windowHeight);
+// 新增：聊天记录管理
+let chatHistory = []; // 存储聊天记录，每个元素是 {sender: 'user/ai', content: '消息内容'}
+const MAX_CHAT_LINES = 8; // 最大显示聊天记录行数
+const CHAT_BOX_WIDTH = 350; // 聊天框宽度
+const CHAT_BOX_HEIGHT = 200; // 聊天框高度
+const CHAT_FONT_SIZE = 14; // 聊天文字大小
+const SCALE_FACTOR = 3//放大参数
+let bgImg; // 存储图片
+
+function preload() {
+  bgImg=loadImage('asset/bg.jpg');
+}
+
+function findClosestPasserby() {
+  if (passersby.length === 0) return null;
+  let closest = passersby[0];
+  let minDistance = abs(closest.x - mainCharacter.x);
+  for (let p of passersby) {
+    let distance = abs(p.x - mainCharacter.x);
+    if (distance < minDistance) {
+      minDistance = distance;
+      closest = p;
+    }
+  }
+  return closest;
+}
+
+// 统一处理路人互动（停止+显示对话框）
+function triggerPasserbyInteraction(dialogText) {
+  // 冷却时间内不重复触发
+  if (millis() - interactionCooldown < INTERACTION_COOLDOWN_DURATION) return;
   
+  const closestPasserby = findClosestPasserby();
+  if (closestPasserby) {
+    closestPasserby.stopAndShowDialog(dialogText);
+    showTemporaryMessage(`路人停下并说：${dialogText}`, 5000);
+  }
+  
+  // 更新冷却时间
+  interactionCooldown = millis();
+}
+
+function setup() {
+  createCanvas(windowWidth, windowHeight); // 用图片尺寸做画布
+  //console.log("图片尺寸：", bgImg.width, bgImg.height); 
   // 检查是否为安全上下文
   if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
     showTemporaryMessage("⚠️ 麦克风需要HTTPS或localhost环境", 8000);
@@ -118,6 +165,7 @@ function setup() {
 
   
 }
+
 
 function handleFirstInteraction() {
   if (userInteracted) return;
@@ -233,11 +281,19 @@ function handleScoreMoodIncrease(score) {
 
 function draw() {
   background(180, 180, 190);
+
+  image(bgImg, 0, 0, windowWidth, windowHeight); 
+  // 混合模式：叠加（图片加载后再执行）
+  blendMode(OVERLAY);
+  fill(0, 100, 200, 120);
+  rect(50, 50, 300, 300);
+  // 重置混合模式
+  blendMode(BLEND);
+
+
   // 显示状态信息（始终显示）
   displayMicStatus();
   displayTemporaryMessage();
-  
-  drawMuddyGround();
   
   // 仅当麦克风已激活时检测鼓掌
   if (micState === MIC_STATE.ACTIVE || micState === MIC_STATE.CALIBRATING) {
@@ -293,6 +349,7 @@ function draw() {
       horizontalAmplitude: random(3, 7), // 随机幅度(3-7像素)
       horizontalFrequency: 0.03 + random(0.02) // 随机频率
     });
+    triggerPasserbyInteraction("😊");
   }
 
   if (!isWaving && !isClapping) {
@@ -304,7 +361,14 @@ function draw() {
   mainCharacter.display();
 
   // 生成路人
-  if (millis() - lastPasserbyTime > random(3000, 8000)) {
+  // 生成路人：心情值影响间隔（心情越好，间隔越短）
+  const minInterval = 5000;
+  const maxInterval = 12000;
+  // 心情值0~100映射到 1~0.3 的系数（心情越好，系数越小，间隔越短）
+  const moodFactor = map(moodValue, 0, 100, 1, 0.3);
+  let randomInterval = randomGaussian((minInterval + maxInterval) / 2, 2000) * moodFactor;
+  randomInterval = constrain(randomInterval, minInterval, maxInterval);
+  if (millis() - lastPasserbyTime > randomInterval ) {
     let side = random() > 0.5 ? 'left' : 'right';
     passersby.push(new Passerby(side));
     lastPasserbyTime = millis();
@@ -327,11 +391,11 @@ function draw() {
   }
 }
 
-function drawMuddyGround() {
-  fill(100, 80, 50);
-  noStroke();
-  rect(0, height * 0.75, width, height * 0.25);
-}
+//function drawMuddyGround() {
+  //fill(100, 80, 50);
+  //noStroke();
+  //rect(0, height * 0.75, width, height * 0.25);
+//}
 
 function checkWaving() {
   if (isWaving && millis() - isWavingTimer > WAVE_HOLD_TIME) {
@@ -704,7 +768,7 @@ class Character {
   // 保留您原有的Character类实现
   constructor(x, y, isSitting = false) {
     this.x = x;
-    this.y = y;
+    this.y = height * 0.85 - 40 * SCALE_FACTOR;
     this.isSitting = isSitting;
     this.eyeY = -5;
     this.mouthY = 10;
@@ -811,7 +875,7 @@ class Character {
   display() {
     push();
     translate(this.x, this.y);
-
+    scale(SCALE_FACTOR); 
     stroke(0);
     strokeWeight(2);
     noFill();
@@ -945,13 +1009,17 @@ class Character {
 class Passerby {
   constructor(side) {
     this.side = side;
-    this.x = side === 'left' ? -50 : width + 50;
-    this.y = height * 0.75 - 65; // 脚底对齐地面线
-    this.speed = WALK_SPEED;
+    this.x = side === 'left' ? -50 : width + 50 * SCALE_FACTOR;
+    this.y = height * 0.85 - 40* SCALE_FACTOR; // 脚底对齐地面线
+    this.speed = WALK_SPEED*1.5;
     this.hasInteracted = false;
     this.interactionTimer = 0;
     this.walkFrame = 0;
     this.message = "";
+    // 新增属性
+    this.isStopped = false; // 是否停止行走
+    this.stopTimer = 0; // 停止计时器
+    this.stopDuration = 5000; // 停止持续时间
   }
 
   update() {
@@ -963,6 +1031,19 @@ class Passerby {
 
     // 行走动画
     this.walkFrame += WALK_FRAME_SPEED;
+    if (this.walkFrame > 2) this.walkFrame = 0;
+
+        
+    //只有未停止时才移动
+    if (!this.isStopped) {
+      if (this.side === 'left') {
+        this.x += this.speed;
+      } else {
+        this.x -= this.speed;
+      }
+    }
+        // 行走动画（停止时也保留轻微动画）
+    this.walkFrame += this.isStopped ? WALK_FRAME_SPEED * 0.3 : WALK_FRAME_SPEED;
     if (this.walkFrame > 2) this.walkFrame = 0;
 
     // 当走到主角附近时互动
@@ -982,6 +1063,14 @@ class Passerby {
       // }, 500);
     }
 
+     // 停止状态计时
+    if (this.isStopped) {
+      if (millis() - this.stopTimer > this.stopDuration) {
+        this.isStopped = false; // 时间到后继续行走
+        this.message = ""; // 清空对话框
+      }
+    }
+
     // 清除消息
     if (this.hasInteracted && millis() - this.interactionTimer > 3000) {
       this.message = "";
@@ -991,7 +1080,7 @@ class Passerby {
   display() {
     push();
     translate(this.x, this.y);
-
+    scale(SCALE_FACTOR); 
     stroke(0);
     strokeWeight(2);
     noFill();
@@ -1043,7 +1132,29 @@ class Passerby {
     //   ellipse(0, -38, 40, 20);
     // }
 
+     // 显示对话框（修改：支持自定义内容和气泡样式）
+    if (this.message) {
+      // 气泡背景
+      stroke(0);
+      fill(255, 240, 200, 255); // 暖黄色气泡
+      ellipse(0, -38, textWidth(this.message) + 20, 25); // 自适应宽度
+      
+      // 对话框文字
+      fill(0);
+      noStroke();
+      textAlign(CENTER, CENTER);
+      textSize(14);
+      text(this.message, 0, -38);
+    }
+
     pop();
+  }
+
+    //停止并显示对话框方法
+  stopAndShowDialog(text) {
+    this.isStopped = true;
+    this.stopTimer = millis();
+    this.message = text;
   }
 
   isOffScreen() {
@@ -1067,6 +1178,10 @@ function sendMessage() {
   let input = document.getElementById("messageInput");
   let message = input.value.trim();
   if (message) {
+
+    customDialogText = message;
+    // 触发路人互动（显示用户输入的文字）
+    triggerPasserbyInteraction(customDialogText);
 
     let messageWithMood = message + "|" + "这是你现在的情绪值" + moodValue;
     serial.write(messageWithMood + "\n"); // 发送消息给 ESP32，必须加换行符
