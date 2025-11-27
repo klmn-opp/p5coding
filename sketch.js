@@ -24,6 +24,17 @@ const MARKER_DURATION = 1500;
 
 let floatTextEffects = [];
 
+//下雨
+let rainDrops = [];
+const MAX_RAIN_DROPS = 200; // 最大雨滴数量
+
+// 哭泣小人对话框内容
+const cryDialogs = ["thank u!", "❤️", "💛", "💚", "💙", "💜", "🧡", "💕", "💖", "💘"];
+let showCryDialog = false; // 是否显示对话框
+let cryDialogText = ""; // 对话框内容
+let cryDialogTimer = 0; // 对话框显示计时器
+const CRY_DIALOG_DURATION = 2000; // 对话框显示时长（毫秒）
+
 let isWavingTimer = 0;
 const WAVE_HOLD_TIME = 500;
 
@@ -90,7 +101,11 @@ let happyCharacter = null;
 let secondCharacterDialog = "";
 const MOVE_SPEED = 6;
 let hasSpoken = false; // 添加对话标记
-let resetCount = 0; // 重置次数计数
+
+//replay
+//let showEndScreen = false;
+let replayButton = null;
+
 
 // 新增：聊天记录管理
 let chatHistory = []; // 存储聊天记录，每个元素是 {sender: 'user/ai', content: '消息内容'}
@@ -171,6 +186,36 @@ class FlowerEmoji {
   }
 }
 
+//雨滴
+class RainDrop {
+  constructor() {
+    this.x = random(width);
+    this.y = random(-height, 0);
+    this.speed = random(5, 15);
+    this.length = random(10, 20);
+    this.opacity = random(150, 255);
+    this.width = random(2, 3);
+    this.wind = random(-0.5, 0.5); // 添加轻微偏移
+  }
+
+  update() {
+    this.y += this.speed;
+    this.x += this.wind; // 左右偏移
+    if (this.y > height) {
+      this.y = random(-height, 0);
+      this.x = random(width);
+    }
+  }
+
+  display() {
+    push();
+    stroke(220, 240, 255, this.opacity);
+    strokeWeight(this.width);
+    line(this.x, this.y, this.x, this.y + this.length);
+    pop();
+  }
+}
+
 function setup() {
   createCanvas(windowWidth, windowHeight); // 用图片尺寸做画布
   //console.log("图片尺寸：", bgImg.width, bgImg.height); 
@@ -178,6 +223,11 @@ function setup() {
   if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
     showTemporaryMessage("⚠️ 麦克风需要HTTPS或localhost环境", 8000);
     console.warn("麦克风API仅在安全上下文中可用(HTTPS或localhost)");
+  }
+ 
+  //初始化雨滴
+  for (let i = 0; i < MAX_RAIN_DROPS; i++) {
+  rainDrops.push(new RainDrop());
   }
   
   mainCharacter = new Character(width / 2, height * 0.75 - 65, true);
@@ -326,13 +376,10 @@ function handleScoreMoodIncrease(score) {
   }
 }
 
-
 function draw() {
   const targetBlend = map(moodValue, 0, moodMax, 0, 1);
-  // 2. 平滑过渡混合比例（避免突变）
   blendAmount = lerp(blendAmount, targetBlend, BLEND_SMOOTH);
 
-  // 3. 绘制混合后的背景
   push();
   // 先画黑白图
   image(bgImg, 0, 0, windowWidth, windowHeight);
@@ -344,8 +391,21 @@ function draw() {
   blendMode(OVERLAY);
   fill(0, 100, 200, 120);
   rect(50, 50, 300, 300);
-  // 重置混合模式
   blendMode(BLEND);
+
+  if (moodValue < 100) {
+    fill(200, 220, 230, 30); // 淡淡的雨雾效果
+    noStroke();
+    rect(0, 0, width, height);
+  // 根据心情值计算雨滴显示比例（心情越好，显示越少）
+  const rainRatio = map(moodValue, 0, 100, 1, 0);
+  const displayCount = floor(MAX_RAIN_DROPS * rainRatio);
+  
+    for (let i = 0; i < displayCount; i++) {
+      rainDrops[i].update();
+      rainDrops[i].display();
+    }
+  }
 
   // ========== 新增状态判断 ==========
   if (gameState === 'normal') {
@@ -382,46 +442,10 @@ function draw() {
     displayMicStatus();
     displayTemporaryMessage();
   } 
-  // 添加 resetting 状态：
-  else if (gameState === 'resetting') {
-  // 重置所有状态回到初始
-    happyCharacter = null;
-    secondCharacterDialog = "";
-    hasSpoken = false;
 
-    mainCharacter.x = width / 2;
-    mainCharacter.y = height * 0.75 - 65;
-
-    mainCharacter.isMoving = false; 
-    mainCharacter.isSmiling = false;
-    mainCharacter.isCrying = true;
-    mainCharacter.leftArmState = "default";
-
-    moodValue = 0;
-    blendAmount = 0;
-    floatTextEffects = [];
-    flowerEmojis = []; // 清空小花特效
-
-    passersby = [];
-    lastPasserbyTime = millis() - random(2000, 5000);
-
-      // 重置互动状态
-    tearDrop = false;
-    tearTimer = 0;
-    isWaving = false;
-    isClapping = false;
-    hasIncreasedMood = false;
-  
-    gameState = 'normal'; // 回到正常状态
-  } 
   // 微笑小人互动
   else if (gameState === 'second_character') {
     if(happyCharacter){
-      //if (happyCharacter && happyCharacter.x > width / 2 - 100 && !secondCharacterDialog) {
-        //happyCharacter.isMoving = false; // 停在主角面前
-        //secondCharacterDialog = "You are the best";
-        //stateTimer = millis();
-      //}
       if (happyCharacter.x < width / 2 - 100 && !secondCharacterDialog) {
         happyCharacter.x += 5; // 持续移动
       }
@@ -438,21 +462,36 @@ function draw() {
         happyCharacter.isMoving = true;
         secondCharacterDialog = "";
       }
-      // 执行移动（离开时使用更快的速度）
+      // 执行移动
       if (happyCharacter.isMoving) {
         happyCharacter.x += 6;
       }
       if (happyCharacter.x > width + 100) {
         happyCharacter = null; 
-        resetCount++; // 增加重置次数
-  
-      // 第二次重置时，重载页面回到初始状态
-        if (resetCount >= 2) {
-          location.reload(); // 强制刷新页面，完全重置所有状态
-        } else {
-          gameState = 'resetting'; // 第一次重置走原有逻辑
-        }
-    }
+        //showEndScreen = true;
+        background(0)
+        // 结束文字
+        fill(255);
+        textSize(50);
+        textAlign(CENTER, CENTER);
+        text("Thanks for your comfort!", width/2, height/2 - 100);
+        text("Now she is happy again, and she has learnt how to", width/2, height/2 - 25);
+        text("comfort others from you!", width/2, height/2 + 50);
+        // 初始化按钮
+        replayButton = createButton('REPLAY');
+        replayButton.position(width/2-80, height/2 + 100);
+        replayButton.mousePressed(resetGame);
+        replayButton.style('font-size', '24px');
+        replayButton.style('padding', '20px 40px');
+        replayButton.style('width', '200px');             // 设置固定宽度
+        replayButton.style('height', '80px');             // 设置固定高度
+        replayButton.style('background-color', '#4CAF50');
+        replayButton.style('color', 'white');
+        replayButton.style('border', 'none');
+        replayButton.style('border-radius', '10px');
+        replayButton.style('cursor', 'pointer');
+        replayButton.style('box-shadow', '0 6px 12px rgba(0,0,0,0.3)'); // 添加阴影
+      }
       happyCharacter.update();
       happyCharacter.display(false);
     // 显示对话
@@ -460,9 +499,9 @@ function draw() {
         push();
         translate(happyCharacter.x, happyCharacter.y - 30 * SCALE_FACTOR);
         fill(255,240,200); stroke(0); strokeWeight(1);
-        rect(-60, -20, 120, 30, 15);
+        rect(-110,-10, 160, 45, 15);
         fill(0); noStroke(); textSize(16); textAlign(CENTER);
-        text(secondCharacterDialog, 0, 0);
+        text(secondCharacterDialog, -30, 0);
         pop();
       }
     }
@@ -547,6 +586,7 @@ function draw() {
       horizontalFrequency: 0.03 + random(0.02) // 随机频率
     });
     triggerPasserbyInteraction("😊");
+    triggerCryDialog();
   }
 
   if (!isWaving && !isClapping) {
@@ -556,6 +596,37 @@ function draw() {
   // 更新和绘制角色
   mainCharacter.update(); 
   mainCharacter.display(true);
+
+  // 绘制哭泣小人对话框
+if (showCryDialog && gameState === 'normal') {
+  // 检查是否超时
+  if (millis() - cryDialogTimer > CRY_DIALOG_DURATION) {
+    showCryDialog = false;
+  }
+  
+  push();
+  // 对话框位置（小人上方）
+  let dialogX = mainCharacter.x;
+  let dialogY = mainCharacter.y - 130;
+  
+  // 计算对话框宽度
+  let dialogWidth = textWidth(cryDialogText) + 80;
+  let dialogHeight = 60;
+  
+  // 绘制对话框背景
+  fill(255, 240, 200);
+  stroke(0);
+  strokeWeight(1);
+  rect(dialogX - dialogWidth/2, dialogY, dialogWidth, dialogHeight, 10);
+  
+  // 绘制对话框文字
+  fill(0);
+  noStroke();
+  textSize(30);
+  textAlign(CENTER, CENTER);
+  text(cryDialogText, dialogX, dialogY + dialogHeight/2);
+  pop();
+}
   
   // 生成路人：心情值影响间隔（心情越好，间隔越短）
   if (gameState === 'normal') {
@@ -687,6 +758,19 @@ function detectClap() {
       isClapping = false;
     }
   }
+}
+
+function resetGame() {
+  rainDrops = [];
+  for (let i = 0; i < MAX_RAIN_DROPS; i++) {
+    rainDrops.push(new RainDrop());
+  }
+  showEndScreen = false;
+  if (replayButton) {
+    replayButton.remove();
+    replayButton = null;
+  }
+  location.reload();
 }
 
 function completeCalibration() {
@@ -859,6 +943,7 @@ function mousePressed() {
         alpha: 255, 
         value: "+2"
       });
+      triggerCryDialog();
     } else {
       showTemporaryMessage("She feels good now！", 1000);
     }
@@ -950,6 +1035,14 @@ function displayTemporaryMessage() {
   textSize(16);
   textAlign(CENTER, CENTER);
   text(tempMessage, width/2, 25);
+}
+
+//哭泣小人回应
+function triggerCryDialog() {
+  // 随机选择对话框内容
+  cryDialogText = cryDialogs[floor(random(cryDialogs.length))];
+  showCryDialog = true;
+  cryDialogTimer = millis(); // 重置计时器
 }
 
 // ---------------------- 角色和路人代码（保持不变） ----------------------
